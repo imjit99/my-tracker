@@ -16,7 +16,7 @@ button{width:100%;padding:14px;font-size:16px;border:none;border-radius:6px;curs
 #copy{background:#2980b9;color:#fff;margin-top:8px}
 #info{color:#ffcc00;text-align:center;margin-bottom:6px}
 #coords{text-align:center;color:#0f0;font-size:13px;margin-top:6px}
-#log{background:#000;color:#0f0;font-family:monospace;font-size:11px;height:70px;overflow:auto;margin-top:6px;padding:6px}
+#log{background:#000;color:#0f0;font-family:monospace;font-size:11px;height:80px;overflow:auto;margin-top:6px;padding:6px}
 </style>
 </head>
 
@@ -57,10 +57,10 @@ const map = L.map("map").setView([20.59,78.96],5);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 let marker, circle;
 
-/* MQTT */
+/* MQTT — EMQX (WORKS) */
 const client = new Paho.MQTT.Client(
-  "broker.hivemq.com",
-  8884,
+  "broker.emqx.io",
+  8084,
   "client_" + Math.random().toString(16).slice(2)
 );
 
@@ -69,6 +69,8 @@ client.onMessageArrived = msg => {
   log("RECEIVED LOCATION");
   updateMap(d.lat, d.lng, d.acc);
 };
+
+client.onConnectionLost = e => log("MQTT LOST");
 
 client.connect({
   useSSL:true,
@@ -98,11 +100,6 @@ function updateMap(lat,lng,acc){
 document.getElementById("start").onclick = ()=>{
   log("START CLICKED");
 
-  if(!navigator.geolocation){
-    log("GEO NOT SUPPORTED");
-    return;
-  }
-
   navigator.geolocation.watchPosition(
     p=>{
       const data={
@@ -118,7 +115,7 @@ document.getElementById("start").onclick = ()=>{
       updateMap(data.lat,data.lng,data.acc);
     },
     e=>log("GPS ERROR: "+e.message),
-    {enableHighAccuracy:true,maximumAge:0}
+    {enableHighAccuracy:true}
   );
 };
 
