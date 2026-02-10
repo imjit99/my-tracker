@@ -3,130 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bargarh Live Tracker</title>
-    
+    <title>Live Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; background: #1a1a1a; color: white; }
-        #map { height: 60vh; width: 100%; background: #222; }
-        .controls { padding: 15px; text-align: center; }
-        button { 
-            background: #007bff; color: white; border: none; padding: 12px 24px; 
-            font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%;
-        }
-        button:active { background: #0056b3; }
-        #debug-console { 
-            padding: 10px; font-family: monospace; font-size: 12px; 
-            background: #000; color: #0f0; height: 20vh; overflow-y: auto; border-top: 1px solid #444;
-        }
-        .label { color: #aaa; font-size: 11px; margin-bottom: 5px; }
+        body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex-grow: 1; width: 100%; }
+        .controls { padding: 15px; background: #222; border-top: 2px solid #444; }
+        button { background: #27ae60; color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; width: 48%; font-weight: bold; }
+        .copy-btn { background: #2980b9; }
+        #debug-console { background: #000; color: #0f0; font-size: 10px; height: 80px; overflow-y: auto; padding: 5px; border-top: 1px solid #333; }
+        .room-info { font-size: 14px; margin-bottom: 10px; color: #ffcc00; text-align: center; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
 
-<div class="controls">
-    <div class="label">ID: <span id="display-id">Connecting...</span></div>
-    <button id="start-btn">START TRACKING</button>
-    <div id="status" style="margin-top:10px; color:#ffcc00;">Status: Ready</div>
-</div>
-
 <div id="debug-console">--- SYSTEM LOG ---<br></div>
+
+<div class="controls">
+    <div class="room-info">Room ID: <b id="display-id">...</b></div>
+    <div style="display: flex; justify-content: space-between;">
+        <button id="start-btn">📡 START BROADCAST</button>
+        <button id="copy-btn" class="copy-btn">🔗 COPY SHARE LINK</button>
+    </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
 
 <script>
     const log = (msg) => {
-        const consoleEl = document.getElementById('debug-console');
-        consoleEl.innerHTML += `> ${msg}<br>`;
-        consoleEl.scrollTop = consoleEl.scrollHeight;
+        const c = document.getElementById('debug-console');
+        c.innerHTML += `> ${msg}<br>`;
+        c.scrollTop = c.scrollHeight;
     };
 
-    // 1. Setup Unique ID
+    // 1. Setup Room ID
     const urlParams = new URLSearchParams(window.location.search);
-    const roomID = urlParams.get('id') || "room_" + Math.random().toString(16).slice(2, 8);
+    let roomID = urlParams.get('id');
+    if(!roomID) {
+        roomID = "bargarh_" + Math.random().toString(16).slice(2, 6);
+        window.history.replaceState({}, '', `?id=${roomID}`);
+    }
     document.getElementById('display-id').innerText = roomID;
     const topic = "bargarh_live/" + roomID;
 
-    // 2. Map Setup (Default to India)
-    const map = L.map('map').setView([20.59, 78.96], 5);
+    // 2. Map Setup
+    const map = L.map('map').setView([21.33, 83.62], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
     let marker, circle;
 
-    // 3. MQTT Connection
+    // 3. MQTT Setup
     const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "cl_" + Math.random().toString(16).slice(2, 6));
-
+    
     client.onMessageArrived = (msg) => {
         const data = JSON.parse(msg.payloadString);
-        log(`Received update: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`);
+        log(`Viewer: Received Location!`);
         updateMap(data.lat, data.lng, data.acc);
     };
 
     client.connect({ 
         onSuccess: () => { 
-            log("Connected to MQTT Broker.");
-            client.subscribe(topic);
-            document.getElementById('status').innerText = "Status: Connected & Listening";
+            log("Connected to Server."); 
+            client.subscribe(topic); 
         },
-        useSSL: true 
+        useSSL: true,
+        reconnect: true 
     });
 
     function updateMap(lat, lng, acc) {
-        const pos = [lat, lng];
         if (!marker) {
-            marker = L.circleMarker(pos, {radius: 8, color: 'red', fillOpacity: 1}).addTo(map);
-            circle = L.circle(pos, {radius: acc}).addTo(map);
-            map.setView(pos, 16);
+            marker = L.circleMarker([lat, lng], {radius: 8, color: 'red'}).addTo(map);
+            circle = L.circle([lat, lng], {radius: acc}).addTo(map);
+            map.setView([lat, lng], 16);
         } else {
-            marker.setLatLng(pos);
-            circle.setLatLng(pos).setRadius(acc);
+            marker.setLatLng([lat, lng]);
+            circle.setLatLng([lat, lng]).setRadius(acc);
         }
     }
 
-    // 4. THE TRACKING LOGIC
+    // 4. Buttons
+    document.getElementById('copy-btn').onclick = () => {
+        navigator.clipboard.writeText(window.location.href);
+        alert("Link Copied! Send this to the person who wants to watch you.");
+    };
+
     document.getElementById('start-btn').onclick = function() {
-        if (!navigator.geolocation) {
-            log("ERROR: Geolocation not supported");
-            return;
-        }
-
-        log("Requesting GPS... Please click 'Allow'");
-        document.getElementById('status').innerText = "Status: Waiting for GPS...";
-
-        // FORCE A COLD START
-        navigator.geolocation.getCurrentPosition((p) => log("Cold start success."), (e) => log("Initial ping failed, waiting for watch..."));
-
+        log("Broadcasting started...");
         navigator.geolocation.watchPosition(
             (pos) => {
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
-                const acc = pos.coords.accuracy;
-
-                log(`GPS LOCK: ${lat.toFixed(4)}, ${lng.toFixed(4)} (Acc: ${acc}m)`);
-                document.getElementById('status').innerText = "Status: ACTIVE & SENDING";
-
-                // Publish to MQTT
-                const message = new Paho.MQTT.Message(JSON.stringify({lat, lng, acc}));
-                message.destinationName = topic;
-                client.send(message);
-
-                // Update local map
-                updateMap(lat, lng, acc);
+                const payload = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
+                client.send(new Paho.MQTT.Message(JSON.stringify(payload)) {{ message.destinationName = topic; }});
+                updateMap(payload.lat, payload.lng, payload.acc);
+                log("Sent update to viewer.");
             },
-            (err) => {
-                log(`GPS ERROR (${err.code}): ${err.message}`);
-                if(err.code === 3) log("Try moving near a window!");
-            },
-            {
-                enableHighAccuracy: false, // Set to false to work better indoors
-                timeout: 10000,
-                maximumAge: 0
-            }
+            (err) => log("GPS Error: " + err.message),
+            { enableHighAccuracy: true }
         );
     };
 </script>
-
 </body>
 </html>
