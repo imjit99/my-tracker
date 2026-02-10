@@ -1,21 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live Location Share</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
-body { margin:0; background:#111; color:#fff; font-family:sans-serif; height:100vh; display:flex; flex-direction:column; }
-#map { flex:1; }
-.controls { padding:10px; background:#222; }
-button { width:100%; padding:12px; font-size:16px; border:none; border-radius:5px; cursor:pointer; }
-#start { background:#27ae60; color:#fff; }
-#copy { background:#2980b9; color:#fff; margin-top:8px; }
-#info { text-align:center; color:#ffcc00; margin-bottom:8px; }
-#coords { text-align:center; font-size:13px; margin-top:5px; color:#0f0; }
+body{margin:0;background:#111;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column}
+#map{flex:1}
+.controls{padding:12px;background:#222}
+button{width:100%;padding:14px;font-size:16px;border:none;border-radius:6px;cursor:pointer}
+#start{background:#27ae60;color:#fff}
+#copy{background:#2980b9;color:#fff;margin-top:8px}
+#info{color:#ffcc00;text-align:center;margin-bottom:6px}
+#coords{text-align:center;color:#0f0;font-size:13px;margin-top:6px}
+#log{background:#000;color:#0f0;font-family:monospace;font-size:11px;height:70px;overflow:auto;margin-top:6px;padding:6px}
 </style>
 </head>
 
@@ -24,101 +25,107 @@ button { width:100%; padding:12px; font-size:16px; border:none; border-radius:5p
 <div id="map"></div>
 
 <div class="controls">
-    <div id="info">Room ID: <b id="room"></b></div>
-    <button id="start">START SHARING (Device 1)</button>
-    <button id="copy">COPY LINK (Send to Device 2)</button>
-    <div id="coords"></div>
+  <div id="info">Room: <b id="room"></b></div>
+  <button id="start">START SHARING</button>
+  <button id="copy">COPY LINK</button>
+  <div id="coords"></div>
+  <div id="log"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/paho-mqtt@1.1.0/paho-mqtt-min.js"></script>
 
 <script>
-/* ---------------- ROOM SETUP ---------------- */
+const log = m => {
+  const el=document.getElementById("log");
+  el.innerHTML += "> " + m + "<br>";
+  el.scrollTop = el.scrollHeight;
+};
+
+/* ROOM */
 const params = new URLSearchParams(location.search);
 let room = params.get("id");
-
-if (!room) {
-    room = "loc_" + Math.random().toString(36).substr(2, 6);
-    history.replaceState({}, "", "?id=" + room);
+if(!room){
+  room = "loc_" + Math.random().toString(36).slice(2,7);
+  history.replaceState({}, "", "?id=" + room);
 }
-
 document.getElementById("room").innerText = room;
 const TOPIC = "live_location/" + room;
 
-/* ---------------- MAP ---------------- */
-const map = L.map("map").setView([20.59, 78.96], 5);
+/* MAP */
+const map = L.map("map").setView([20.59,78.96],5);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+let marker, circle;
 
-let marker = null;
-let accuracyCircle = null;
-
-/* ---------------- MQTT ---------------- */
+/* MQTT */
 const client = new Paho.MQTT.Client(
-    "broker.hivemq.com",
-    8000,
-    "client_" + Math.random().toString(16).substr(2, 8)
+  "broker.hivemq.com",
+  8884,
+  "client_" + Math.random().toString(16).slice(2)
 );
 
-client.onMessageArrived = (msg) => {
-    try {
-        const d = JSON.parse(msg.payloadString);
-        updateMap(d.lat, d.lng, d.acc);
-    } catch (e) {
-        console.error("Bad message", e);
-    }
+client.onMessageArrived = msg => {
+  const d = JSON.parse(msg.payloadString);
+  log("RECEIVED LOCATION");
+  updateMap(d.lat, d.lng, d.acc);
 };
 
 client.connect({
-    useSSL: true,
-    onSuccess: () => client.subscribe(TOPIC),
-    onFailure: (e) => alert("MQTT Error: " + e.errorMessage),
+  useSSL:true,
+  onSuccess:()=>{
+    log("MQTT CONNECTED");
+    client.subscribe(TOPIC);
+  },
+  onFailure:e=>log("MQTT FAIL: "+e.errorMessage)
 });
 
-/* ---------------- MAP UPDATE ---------------- */
-function updateMap(lat, lng, acc) {
-    const pos = [lat, lng];
-
-    if (!marker) {
-        marker = L.marker(pos).addTo(map);
-        accuracyCircle = L.circle(pos, { radius: acc, color: "#00f" }).addTo(map);
-        map.setView(pos, 16);
-    } else {
-        marker.setLatLng(pos);
-        accuracyCircle.setLatLng(pos).setRadius(acc);
-    }
-
-    document.getElementById("coords").innerText =
-        `Lat: ${lat.toFixed(5)} | Lng: ${lng.toFixed(5)} | Accuracy: ${Math.round(acc)}m`;
+/* MAP UPDATE */
+function updateMap(lat,lng,acc){
+  const p=[lat,lng];
+  if(!marker){
+    marker=L.marker(p).addTo(map);
+    circle=L.circle(p,{radius:acc,color:"#00f"}).addTo(map);
+    map.setView(p,16);
+  }else{
+    marker.setLatLng(p);
+    circle.setLatLng(p).setRadius(acc);
+  }
+  document.getElementById("coords").innerText =
+    `Lat ${lat.toFixed(5)} | Lng ${lng.toFixed(5)} | ±${Math.round(acc)}m`;
 }
 
-/* ---------------- SHARING ---------------- */
-document.getElementById("start").onclick = () => {
-    navigator.geolocation.watchPosition(
-        (p) => {
-            const payload = {
-                lat: p.coords.latitude,
-                lng: p.coords.longitude,
-                acc: p.coords.accuracy,
-                t: Date.now()
-            };
+/* START SHARING */
+document.getElementById("start").onclick = ()=>{
+  log("START CLICKED");
 
-            const msg = new Paho.MQTT.Message(JSON.stringify(payload));
-            msg.destinationName = TOPIC;
-            msg.retained = true; // VERY IMPORTANT
-            client.send(msg);
+  if(!navigator.geolocation){
+    log("GEO NOT SUPPORTED");
+    return;
+  }
 
-            updateMap(payload.lat, payload.lng, payload.acc);
-        },
-        (err) => alert("GPS Error: " + err.message),
-        { enableHighAccuracy: true, maximumAge: 0 }
-    );
+  navigator.geolocation.watchPosition(
+    p=>{
+      const data={
+        lat:p.coords.latitude,
+        lng:p.coords.longitude,
+        acc:p.coords.accuracy
+      };
+      log("SENDING LOCATION");
+      const m=new Paho.MQTT.Message(JSON.stringify(data));
+      m.destinationName=TOPIC;
+      m.retained=true;
+      client.send(m);
+      updateMap(data.lat,data.lng,data.acc);
+    },
+    e=>log("GPS ERROR: "+e.message),
+    {enableHighAccuracy:true,maximumAge:0}
+  );
 };
 
-/* ---------------- COPY LINK ---------------- */
-document.getElementById("copy").onclick = async () => {
-    await navigator.clipboard.writeText(location.href);
-    alert("Link copied. Open on Device 2.");
+/* COPY */
+document.getElementById("copy").onclick=async()=>{
+  await navigator.clipboard.writeText(location.href);
+  log("LINK COPIED");
 };
 </script>
 
