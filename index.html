@@ -3,20 +3,57 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Live Location Share</title>
+<title>Bargarh Live Tracker</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
-body{margin:0;background:#111;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column}
-#map{flex:1}
-.controls{padding:12px;background:#222}
-button{width:100%;padding:14px;font-size:16px;border:none;border-radius:6px;cursor:pointer}
-#start{background:#27ae60;color:#fff}
-#copy{background:#2980b9;color:#fff;margin-top:8px}
-#info{color:#ffcc00;text-align:center;margin-bottom:6px}
-#coords{text-align:center;color:#0f0;font-size:13px;margin-top:6px}
-#log{background:#000;color:#0f0;font-family:monospace;font-size:11px;height:80px;overflow:auto;margin-top:6px;padding:6px}
+body {
+    margin: 0;
+    font-family: sans-serif;
+    background: #1a1a1a;
+    color: #fff;
+}
+#map {
+    height: 60vh;
+    width: 100%;
+    background: #222;
+}
+.controls {
+    padding: 15px;
+    text-align: center;
+}
+button {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    background: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+button:active {
+    background: #0056b3;
+}
+#status {
+    margin-top: 10px;
+    color: #ffcc00;
+}
+#debug {
+    height: 20vh;
+    background: #000;
+    color: #0f0;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 10px;
+    overflow-y: auto;
+}
+.label {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 6px;
+}
 </style>
 </head>
 
@@ -25,104 +62,133 @@ button{width:100%;padding:14px;font-size:16px;border:none;border-radius:6px;curs
 <div id="map"></div>
 
 <div class="controls">
-  <div id="info">Room: <b id="room"></b></div>
-  <button id="start">START SHARING</button>
-  <button id="copy">COPY LINK</button>
-  <div id="coords"></div>
-  <div id="log"></div>
+    <div class="label">ROOM ID: <span id="room-id">...</span></div>
+    <button id="start-btn">START TRACKING</button>
+    <div id="status">Status: Ready</div>
 </div>
 
+<div id="debug">--- SYSTEM LOG ---<br></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/paho-mqtt@1.1.0/paho-mqtt-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
 
 <script>
-const log = m => {
-  const el=document.getElementById("log");
-  el.innerHTML += "> " + m + "<br>";
-  el.scrollTop = el.scrollHeight;
-};
-
-/* ROOM */
-const params = new URLSearchParams(location.search);
-let room = params.get("id");
-if(!room){
-  room = "loc_" + Math.random().toString(36).slice(2,7);
-  history.replaceState({}, "", "?id=" + room);
+/* ---------------- LOG ---------------- */
+function log(msg) {
+    const d = document.getElementById("debug");
+    d.innerHTML += "> " + msg + "<br>";
+    d.scrollTop = d.scrollHeight;
 }
-document.getElementById("room").innerText = room;
-const TOPIC = "live_location/" + room;
 
-/* MAP */
-const map = L.map("map").setView([20.59,78.96],5);
+/* ---------------- ROOM ---------------- */
+const params = new URLSearchParams(location.search);
+let roomID = params.get("id");
+if (!roomID) {
+    roomID = "room_" + Math.random().toString(16).slice(2, 8);
+    history.replaceState({}, "", "?id=" + roomID);
+}
+document.getElementById("room-id").innerText = roomID;
+const TOPIC = "bargarh_live/" + roomID;
+
+/* ---------------- MAP ---------------- */
+const map = L.map("map").setView([20.59, 78.96], 5);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
-let marker, circle;
 
-/* MQTT — EMQX (WORKS) */
+let marker = null;
+let circle = null;
+
+function updateMap(lat, lng, acc) {
+    const pos = [lat, lng];
+    if (!marker) {
+        marker = L.circleMarker(pos, {
+            radius: 8,
+            color: "red",
+            fillOpacity: 1
+        }).addTo(map);
+
+        circle = L.circle(pos, {
+            radius: acc,
+            color: "#00f"
+        }).addTo(map);
+
+        map.setView(pos, 16);
+    } else {
+        marker.setLatLng(pos);
+        circle.setLatLng(pos).setRadius(acc);
+    }
+}
+
+/* ---------------- MQTT (FIXED) ---------------- */
+log("Connecting to MQTT...");
 const client = new Paho.MQTT.Client(
-  "broker.emqx.io",
-  8084,
-  "client_" + Math.random().toString(16).slice(2)
+    "broker.hivemq.com",
+    8884,   // ✅ CORRECT SSL PORT
+    "cl_" + Math.random().toString(16).slice(2, 10)
 );
 
-client.onMessageArrived = msg => {
-  const d = JSON.parse(msg.payloadString);
-  log("RECEIVED LOCATION");
-  updateMap(d.lat, d.lng, d.acc);
+client.onMessageArrived = (msg) => {
+    const data = JSON.parse(msg.payloadString);
+    log("RECEIVED: " + data.lat.toFixed(4) + ", " + data.lng.toFixed(4));
+    updateMap(data.lat, data.lng, data.acc);
 };
 
-client.onConnectionLost = e => log("MQTT LOST");
+client.onConnectionLost = () => {
+    log("MQTT CONNECTION LOST");
+};
 
 client.connect({
-  useSSL:true,
-  onSuccess:()=>{
-    log("MQTT CONNECTED");
-    client.subscribe(TOPIC);
-  },
-  onFailure:e=>log("MQTT FAIL: "+e.errorMessage)
+    useSSL: true,
+    onSuccess: () => {
+        log("MQTT CONNECTED");
+        client.subscribe(TOPIC);
+        document.getElementById("status").innerText =
+            "Status: Connected & Listening";
+    },
+    onFailure: e => {
+        log("MQTT ERROR: " + e.errorMessage);
+    }
 });
 
-/* MAP UPDATE */
-function updateMap(lat,lng,acc){
-  const p=[lat,lng];
-  if(!marker){
-    marker=L.marker(p).addTo(map);
-    circle=L.circle(p,{radius:acc,color:"#00f"}).addTo(map);
-    map.setView(p,16);
-  }else{
-    marker.setLatLng(p);
-    circle.setLatLng(p).setRadius(acc);
-  }
-  document.getElementById("coords").innerText =
-    `Lat ${lat.toFixed(5)} | Lng ${lng.toFixed(5)} | ±${Math.round(acc)}m`;
-}
+/* ---------------- START TRACKING ---------------- */
+document.getElementById("start-btn").onclick = () => {
+    log("START CLICKED");
 
-/* START SHARING */
-document.getElementById("start").onclick = ()=>{
-  log("START CLICKED");
+    if (!navigator.geolocation) {
+        log("ERROR: Geolocation not supported");
+        return;
+    }
 
-  navigator.geolocation.watchPosition(
-    p=>{
-      const data={
-        lat:p.coords.latitude,
-        lng:p.coords.longitude,
-        acc:p.coords.accuracy
-      };
-      log("SENDING LOCATION");
-      const m=new Paho.MQTT.Message(JSON.stringify(data));
-      m.destinationName=TOPIC;
-      m.retained=true;
-      client.send(m);
-      updateMap(data.lat,data.lng,data.acc);
-    },
-    e=>log("GPS ERROR: "+e.message),
-    {enableHighAccuracy:true}
-  );
-};
+    document.getElementById("status").innerText =
+        "Status: Waiting for GPS permission...";
 
-/* COPY */
-document.getElementById("copy").onclick=async()=>{
-  await navigator.clipboard.writeText(location.href);
-  log("LINK COPIED");
+    navigator.geolocation.watchPosition(
+        (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const acc = pos.coords.accuracy;
+
+            log("GPS: " + lat.toFixed(4) + ", " + lng.toFixed(4));
+
+            const message = new Paho.MQTT.Message(
+                JSON.stringify({ lat, lng, acc })
+            );
+            message.destinationName = TOPIC;
+            client.send(message);
+
+            updateMap(lat, lng, acc);
+
+            document.getElementById("status").innerText =
+                "Status: ACTIVE & SENDING";
+        },
+        (err) => {
+            log("GPS ERROR (" + err.code + "): " + err.message);
+        },
+        {
+            enableHighAccuracy: false,
+            timeout: 15000,
+            maximumAge: 0
+        }
+    );
 };
 </script>
 
