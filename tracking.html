@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Live Tracker</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+
+    <style>
+        body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex-grow: 1; width: 100%; }
+        .ui { padding: 15px; background: #2c3e50; color: white; text-align: center; }
+        button { background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        .status { font-size: 12px; margin-top: 5px; color: #bdc3c7; }
+    </style>
+</head>
+<body>
+
+<div class="ui">
+    <div id="room-display">Your Tracker ID: <b id="room-id">...</b></div>
+    <button onclick="startTracking()">Start Live Sharing</button>
+    <div class="status" id="status">Status: Waiting for action...</div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    // 1. GENERATE A UNIQUE ID (Or enter your own)
+    // To track someone, both people must have the SAME ID in their URL: ?id=bargarh_test
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomID = urlParams.get('id') || "user_" + Math.random().toString(16).slice(2, 8);
+    document.getElementById('room-id').innerText = roomID;
+    const topic = "free_tracker_2026/" + roomID;
+
+    // 2. INITIALIZE MAP (Centered on India by default, not the ocean)
+    const map = L.map('map').setView([20.5937, 78.9629], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+    
+    let marker = null;
+    let circle = null;
+
+    // 3. MQTT SETUP (Using HiveMQ Public Broker)
+    const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "client_" + Math.random());
+
+    client.onMessageArrived = (message) => {
+        const data = JSON.parse(message.payloadString);
+        updateMap(data.lat, data.lng, data.acc);
+        document.getElementById('status').innerText = "Status: Receiving live updates!";
+    };
+
+    client.connect({ 
+        onSuccess: () => { 
+            client.subscribe(topic);
+            document.getElementById('status').innerText = "Status: Connected to Server";
+        },
+        useSSL: true 
+    });
+
+    // 4. MAP UPDATE LOGIC
+    function updateMap(lat, lng, acc) {
+    const pos = [lat, lng];
+    console.log("Plotting at:", pos); // Check your browser console!
+
+    if (!marker) {
+        // Create a bright red circle marker so it's impossible to miss
+        marker = L.circleMarker(pos, {
+            radius: 10,
+            fillColor: "#ff0000",
+            color: "#000",
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map);
+        
+        circle = L.circle(pos, { radius: acc }).addTo(map);
+        map.setView(pos, 16); 
+    } else {
+        marker.setLatLng(pos);
+        circle.setLatLng(pos).setRadius(acc);
+    }
+}
+
+    // 5. GEOLOCATION SENDER
+    function startTracking() {
+        if (!navigator.geolocation) return alert("Browser doesn't support GPS");
+
+        document.getElementById('status').innerText = "Status: Finding GPS signal...";
+        
+        navigator.geolocation.watchPosition(
+            (pos) => {
+                const payload = {
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    acc: pos.coords.accuracy
+                };
+                // Send to others
+                const message = new Paho.MQTT.Message(JSON.stringify(payload));
+                message.destinationName = topic;
+                client.send(message);
+
+                // Update my own map
+                updateMap(payload.lat, payload.lng, payload.acc);
+            },
+            (err) => alert("GPS Error: " + err.message),
+            { enableHighAccuracy: true, maximumAge: 0 }
+        );
+    }
+</script>
+
+</body>
+</html>
